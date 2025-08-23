@@ -1,0 +1,43 @@
+id: AEGISCAN-001
+name: Command Injection
+severity: HIGH
+cwe: CWE-77
+description: Detects potential command injection vulnerabilities where user-controlled input is used in OS command execution functions.
+sources:
+  - "input"
+  - "request.args"
+  - "request.form"
+  - "request.json"
+sinks:
+  - "os.system"
+  - "os.popen"
+  - "subprocess.call"
+  - "subprocess.run"
+  - "subprocess.Popen"
+sanitizers:
+  - "shlex.quote"
+patterns:
+  # This section would contain AST patterns for more complex matching, e.g.,
+  # direct string concatenation without proper quoting. For now, focus on taint.
+message: "User-controlled input flows into a command execution function. This may lead to command injection."
+examples:
+  vuln:
+    - |
+      import os
+      user_input = input("Enter command: ")
+      os.system("echo " + user_input)
+    - |
+      import subprocess
+      cmd = request.args.get("cmd")
+      subprocess.run(cmd, shell=True)
+  safe:
+    - |
+      import os
+      user_input = input("Enter command: ")
+      os.system("echo safe_command")
+    - |
+      import subprocess
+      import shlex
+      user_input = request.args.get("cmd")
+      subprocess.run([shlex.quote(user_input)], shell=False)
+fix: "Use parameterized execution functions or `shlex.quote` to properly escape user input, and avoid `shell=True`."

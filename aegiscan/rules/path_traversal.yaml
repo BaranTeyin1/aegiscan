@@ -1,0 +1,49 @@
+id: AEGISCAN-005
+name: Path Traversal
+severity: HIGH
+cwe: CWE-22
+description: Detects potential path traversal vulnerabilities where user-controlled input is used in file system operations without proper sanitization.
+sources:
+  - "input"
+  - "request.args"
+sinks:
+  - "open"
+  - "os.path.join"
+  - "os.remove"
+  - "os.rename"
+  - "os.makedirs"
+sanitizers:
+  - "os.path.normpath"
+  - "os.path.abspath"
+patterns:
+message: "User-controlled input found in a file system path. This may lead to Path Traversal."
+examples:
+  vuln:
+    - |
+      import os
+      filename = input("Enter filename: ")
+      with open(filename, "r") as f:
+          content = f.read()
+    - |
+      import os
+      base_dir = "/var/www/data"
+      file = request.args.get("file")
+      filepath = os.path.join(base_dir, file)
+      os.remove(filepath)
+  safe:
+    - |
+      import os
+      filename = "data.txt"
+      with open(filename, "r") as f:
+          content = f.read()
+    - |
+      import os
+      base_dir = "/var/www/data"
+      file = request.args.get("file")
+      # Ensure the normalized path starts with the base directory to prevent traversal
+      filepath = os.path.join(base_dir, os.path.normpath(file))
+      if not filepath.startswith(base_dir):
+          raise ValueError("Attempted path traversal!")
+      with open(filepath, "r") as f:
+          content = f.read()
+fix: "Use `os.path.normpath()` and `os.path.abspath()` to sanitize user-supplied paths. Validate that the final path is within an expected base directory."

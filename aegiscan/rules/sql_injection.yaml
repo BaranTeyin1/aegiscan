@@ -1,0 +1,40 @@
+id: AEGISCAN-003
+name: SQL Injection
+severity: HIGH
+cwe: CWE-89
+description: Detects potential SQL injection vulnerabilities where user input is directly concatenated into SQL queries.
+sources:
+  - "input"
+  - "request.args"
+  - "request.form"
+sinks:
+  - "cursor.execute"
+  - "db.execute"
+  - "sqlite3.execute"
+  - "psycopg2.execute"
+patterns:
+message: "User-controlled input found in a SQL query. This may lead to SQL Injection."
+examples:
+  vuln:
+    - |
+      import sqlite3
+      conn = sqlite3.connect("test.db")
+      cursor = conn.cursor()
+      user_id = input("Enter user ID: ")
+      cursor.execute("SELECT * FROM users WHERE id = " + user_id)
+    - |
+      from flask import request
+      query = "SELECT * FROM products WHERE name = '%s'" % request.args.get("name")
+  safe:
+    - |
+      import sqlite3
+      conn = sqlite3.connect("test.db")
+      cursor = conn.cursor()
+      user_id = input("Enter user ID: ")
+      cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+    - |
+      from flask import request
+      name = request.args.get("name")
+      query = "SELECT * FROM products WHERE name = %s"
+      cursor.execute(query, (name,))
+fix: "Use parameterized queries or prepared statements instead of string concatenation to build SQL queries."

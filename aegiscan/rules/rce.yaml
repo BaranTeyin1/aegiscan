@@ -1,0 +1,38 @@
+id: AEGISCAN-002
+name: Remote Code Execution (RCE)
+severity: HIGH
+cwe: CWE-94
+description: Detects potential remote code execution vulnerabilities via dangerous functions like eval(), exec(), or pickle.loads().
+sources:
+  - "input"
+  - "request.data"
+  - "request.args"
+sinks:
+  - "eval"
+  - "exec"
+  - "pickle.loads"
+  - "yaml.load"
+sanitizers:
+  - "ast.literal_eval"
+  - "json.loads" # For YAML, JSON is a safe alternative
+patterns:
+message: "Untrusted input used in a code execution function. This can lead to Remote Code Execution."
+examples:
+  vuln:
+    - |
+      user_code = input("Enter code: ")
+      eval(user_code)
+    - |
+      import pickle
+      data = request.data
+      pickle.loads(data)
+  safe:
+    - |
+      import ast
+      user_data = input("Enter data: ")
+      safe_data = ast.literal_eval(user_data)
+    - |
+      import json
+      user_data = request.data
+      safe_data = json.loads(user_data)
+fix: "Avoid using `eval()`, `exec()`, `pickle.loads()`, `yaml.load()` with untrusted input. Prefer `ast.literal_eval()` or `json.loads()` for safe deserialization."

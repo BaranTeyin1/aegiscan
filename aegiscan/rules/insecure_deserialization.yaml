@@ -1,0 +1,36 @@
+id: AEGISCAN-006
+name: Insecure Deserialization
+severity: HIGH
+cwe: CWE-502
+description: Detects potential insecure deserialization vulnerabilities using dangerous functions like pickle.load().
+sources:
+  - "request.data"
+  - "input"
+sinks:
+  - "pickle.load"
+  - "yaml.load"
+sanitizers:
+  - "json.load"
+  - "yaml.safe_load"
+patterns:
+message: "Untrusted data deserialized using a dangerous function. This may lead to Insecure Deserialization."
+examples:
+  vuln:
+    - |
+      import pickle
+      data = request.data
+      deserialized_object = pickle.loads(data)
+    - |
+      import yaml
+      data = input("Enter YAML data: ")
+      yaml.load(data, Loader=yaml.Loader) # yaml.Loader is equivalent to full load
+  safe:
+    - |
+      import json
+      data = request.data
+      deserialized_object = json.loads(data)
+    - |
+      import yaml
+      data = input("Enter YAML data: ")
+      yaml.safe_load(data)
+fix: "Avoid using `pickle.load()` or `yaml.load()` with untrusted data. Prefer `json.load()` or `yaml.safe_load()` for safe deserialization."

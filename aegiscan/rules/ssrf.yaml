@@ -1,0 +1,37 @@
+id: AEGISCAN-004
+name: Server-Side Request Forgery (SSRF)
+severity: HIGH
+cwe: CWE-918
+description: Detects potential Server-Side Request Forgery vulnerabilities where user-controlled input is used in URL requests.
+sources:
+  - "input"
+  - "request.args"
+sinks:
+  - "urllib.request.urlopen"
+  - "requests.get"
+  - "requests.post"
+  - "http.client.HTTPConnection"
+patterns:
+message: "User-controlled input flows into a URL request function. This may lead to Server-Side Request Forgery."
+examples:
+  vuln:
+    - |
+      import requests
+      url = input("Enter URL: ")
+      requests.get(url)
+    - |
+      import urllib.request
+      url = request.args.get("url")
+      urllib.request.urlopen(url)
+  safe:
+    - |
+      import requests
+      url = "https://example.com/api/data"
+      requests.get(url)
+    - |
+      import requests
+      user_url = request.args.get("url")
+      allowed_domains = ["example.com", "api.internal"]
+      if any(user_url.startswith(f"https://{d}") for d in allowed_domains):
+          requests.get(user_url)
+fix: "Implement an allowlist of permitted domains/IPs for URL requests. Do not fetch URLs directly from user input without validation."
