@@ -10,6 +10,7 @@ setup(
     install_requires=[
         'PyYAML',
         'sarif_om',
+        'colorama', # Added for colored CLI output
     ],
     entry_points={
         'console_scripts': [

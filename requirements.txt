@@ -1,2 +1,3 @@
 PyYAML
 sarif_om
+colorama # Added for colored CLI output

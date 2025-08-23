@@ -1,9 +1,14 @@
 import json
 import os
 from typing import List
+import sys
 
 # External library for SARIF, assumed to be installed via setup.py
 import sarif_om as sarif
+
+# For colored output
+from colorama import Fore, Style, init
+init(autoreset=True) # Initialize colorama to reset colors after each print
 
 from aegiscan.analyzer import Finding
 from aegiscan.rules import RuleSeverity
@@ -64,18 +69,25 @@ def convert_to_jsonl(findings: List[Finding]) -> str:
 
 def pretty_print_findings(findings: List[Finding]):
     if not findings:
-        print("No findings found.")
+        print(f"{Fore.GREEN}No findings found.{Style.RESET_ALL}")
         return
 
     for finding in findings:
-        print(f"--------------------------------------------------")
-        print(f"Rule ID: {finding.rule_id}")
-        print(f"Severity: {finding.severity.value.upper()}")
-        print(f"CWE: {finding.cwe}")
-        print(f"File: {finding.file}")
-        print(f"Line: {finding.start_line}-{finding.end_line}")
-        print(f"Message: {finding.message}")
-        print(f"Code Snippet:\n{finding.code_snippet}")
+        severity_color = {
+            RuleSeverity.HIGH: Fore.RED,
+            RuleSeverity.MEDIUM: Fore.YELLOW,
+            RuleSeverity.LOW: Fore.CYAN,
+            RuleSeverity.INFO: Fore.BLUE,
+        }.get(finding.severity, Fore.WHITE)
+
+        print(f"{Fore.LIGHTBLACK_EX}--------------------------------------------------{Style.RESET_ALL}")
+        print(f"Rule ID: {Fore.WHITE}{finding.rule_id}{Style.RESET_ALL}")
+        print(f"Severity: {severity_color}{finding.severity.value.upper()}{Style.RESET_ALL}")
+        print(f"CWE: {Fore.MAGENTA}{finding.cwe}{Style.RESET_ALL}")
+        print(f"File: {Fore.CYAN}{finding.file}{Style.RESET_ALL}")
+        print(f"Line: {Fore.CYAN}{finding.start_line}-{finding.end_line}{Style.RESET_ALL}")
+        print(f"Message: {Fore.WHITE}{finding.message}{Style.RESET_ALL}")
+        print(f"Code Snippet:\n{Fore.LIGHTBLACK_EX}{finding.code_snippet}{Style.RESET_ALL}")
         if finding.fix:
-            print(f"Suggested Fix: {finding.fix}")
-        print(f"--------------------------------------------------\n")
+            print(f"Suggested Fix: {Fore.GREEN}{finding.fix}{Style.RESET_ALL}")
+        print(f"{Fore.LIGHTBLACK_EX}--------------------------------------------------\n{Style.RESET_ALL}")

@@ -5,9 +5,15 @@ import multiprocessing
 import sys # Import sys module
 from typing import List
 
+# For colored output
+from colorama import Fore, Style, init
+init(autoreset=True) # Initialize colorama to reset colors after each print
+
 from aegiscan.rules import load_rules_from_yaml, RuleSeverity
 from aegiscan.analyzer import Analyzer, Finding
 from aegiscan.output import convert_to_sarif, convert_to_jsonl, pretty_print_findings
+
+AEGISCAN_LOGO = f"{Fore.GREEN}AEGISCAN{Style.RESET_ALL}{Fore.CYAN} - Python SAST Tool{Style.RESET_ALL}"
 
 def _analyze_single_file(args_tuple) -> List[Finding]:
     filepath, file_content, rules_path = args_tuple
@@ -43,7 +49,18 @@ def scan_path(path: str, rules_path: str, exclude_patterns: List[str]) -> List[F
     return all_findings
 
 def main():
-    parser = argparse.ArgumentParser(description="Aegiscan: A rule-based SAST tool for Python code.")
+    # Logo ve hoş geldiniz mesajı şimdi description içinde yönetilecek
+    print(f"{Fore.GREEN}AEGISCAN{Style.RESET_ALL}{Fore.CYAN} - Python SAST Tool{Style.RESET_ALL}")
+    print("\n")
+    sys.stdout.flush()
+    
+    # ASCII art logo description içine eklendi
+    app_description = f"{Fore.GREEN}AEGISCAN{Style.RESET_ALL}{Fore.CYAN} - Python SAST Tool{Style.RESET_ALL}\n\n{Fore.CYAN}Aegiscan: A rule-based SAST tool for Python code.{Style.RESET_ALL}"
+
+    parser = argparse.ArgumentParser(
+        description=app_description,
+        formatter_class=argparse.RawTextHelpFormatter # Preserve formatting for descriptions
+    )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # Scan command
@@ -102,4 +119,6 @@ def main():
                     exit(1) # Exit with error code
 
 if __name__ == "__main__":
+    # Logo artık main fonksiyonunun başında veya __main__ bloğunda ayrı olarak yazdırılmayacak,
+    # description parametresi aracılığıyla argparse tarafından yönetilecek.
     main()

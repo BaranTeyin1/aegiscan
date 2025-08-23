@@ -6,6 +6,8 @@ description: Detects potential insecure deserialization vulnerabilities using da
 sources:
   - "request.data"
   - "input"
+  - "request.args" # Added for Base64 encoded payloads in URL parameters
+  - "request.form" # Added for Base64 encoded payloads in form data
 sinks:
   - "pickle.load"
   - "yaml.load"
@@ -24,6 +26,13 @@ examples:
       import yaml
       data = input("Enter YAML data: ")
       yaml.load(data, Loader=yaml.Loader) # yaml.Loader is equivalent to full load
+    - |
+      import pickle
+      import base64
+      from flask import request
+      encoded_data = request.args.get("payload")
+      decoded_data = base64.b64decode(encoded_data)
+      deserialized_object = pickle.loads(decoded_data)
   safe:
     - |
       import json
