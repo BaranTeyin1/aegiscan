@@ -16,15 +16,20 @@ from aegiscan.output import convert_to_sarif, convert_to_jsonl, pretty_print_fin
 AEGISCAN_LOGO = f"{Fore.GREEN}AEGISCAN{Style.RESET_ALL}{Fore.CYAN} - Python SAST Tool{Style.RESET_ALL}"
 
 def _analyze_single_file(args_tuple) -> List[Finding]:
-    filepath, file_content, rules_path = args_tuple
+    filepath, file_content, rules_path, project_root = args_tuple
     rules = load_rules_from_yaml(rules_path)
-    analyzer = Analyzer(rules)
+    analyzer = Analyzer(rules, project_root)
     return analyzer.analyze_file(filepath, file_content)
 
-def scan_path(path: str, rules_path: str, exclude_patterns: List[str]) -> List[Finding]:
+def scan_path(path: str, rules_path: str, exclude_patterns: List[str], project_root: str) -> List[Finding]:
     all_findings: List[Finding] = []
     files_to_analyze = []
 
+    # Initialize Analyzer once for all files
+    rules = load_rules_from_yaml(rules_path)
+    analyzer = Analyzer(rules, project_root)
+
+    python_files = []
     for root, dirnames, filenames in os.walk(path):
         # Exclude directories based on patterns
         dirnames[:] = [d for d in dirnames if not any(fnmatch.fnmatch(d, p) for p in exclude_patterns)]
@@ -32,19 +37,16 @@ def scan_path(path: str, rules_path: str, exclude_patterns: List[str]) -> List[F
         for filename in filenames:
             if filename.endswith(".py") and not any(fnmatch.fnmatch(filename, p) for p in exclude_patterns):
                 filepath = os.path.join(root, filename)
-                try:
-                    with open(filepath, 'r', encoding='utf-8') as f:
-                        file_content = f.read()
-                    files_to_analyze.append((filepath, file_content, rules_path))
-                except Exception as e:
-                    print(f"Error reading file {filepath}: {e}")
+                python_files.append(filepath)
 
-    # Use multiprocessing to analyze files
-    if files_to_analyze:
-        with multiprocessing.Pool(multiprocessing.cpu_count()) as pool:
-            results = pool.map(_analyze_single_file, files_to_analyze)
-            for findings_list in results:
-                all_findings.extend(findings_list)
+    for filepath in sorted(python_files):
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                file_content = f.read()
+            findings_list = analyzer.analyze_file(filepath, file_content)
+            all_findings.extend(findings_list)
+        except Exception as e:
+            print(f"Error reading file {filepath}: {e}")
 
     return all_findings
 
@@ -90,7 +92,8 @@ def main():
 
     if args.command == "scan":
         exclude_patterns = [p.strip() for p in args.exclude_patterns.split(',') if p.strip()]
-        findings = scan_path(args.path, args.rules_path, exclude_patterns)
+        # Pass args.path as project_root
+        findings = scan_path(args.path, args.rules_path, exclude_patterns, args.path)
 
         if args.output_format == "sarif":
             output_content = convert_to_sarif(findings)
