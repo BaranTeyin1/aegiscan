@@ -21,13 +21,13 @@ def _analyze_single_file(args_tuple) -> List[Finding]:
     analyzer = Analyzer(rules, project_root)
     return analyzer.analyze_file(filepath, file_content)
 
-def scan_path(path: str, rules_path: str, exclude_patterns: List[str], project_root: str) -> List[Finding]:
+def scan_path(path: str, rules_path: str, exclude_patterns: List[str], project_root: str, show_taint: bool) -> List[Finding]:
     all_findings: List[Finding] = []
     files_to_analyze = []
 
     # Initialize Analyzer once for all files
     rules = load_rules_from_yaml(rules_path)
-    analyzer = Analyzer(rules, project_root)
+    analyzer = Analyzer(rules, project_root, show_taint)
 
     python_files = []
     for root, dirnames, filenames in os.walk(path):
@@ -83,6 +83,8 @@ def main():
                              help="Path to a baseline JSON file to suppress existing findings.")
     scan_parser.add_argument("--update-baseline", action="store_true",
                              help="Update the baseline file with current findings.")
+    scan_parser.add_argument("--show-taint", action="store_true",
+                             help="Show detailed taint propagation summary for findings.")
 
     args = parser.parse_args()
 
@@ -92,8 +94,7 @@ def main():
 
     if args.command == "scan":
         exclude_patterns = [p.strip() for p in args.exclude_patterns.split(',') if p.strip()]
-        # Pass args.path as project_root
-        findings = scan_path(args.path, args.rules_path, exclude_patterns, args.path)
+        findings = scan_path(args.path, args.rules_path, exclude_patterns, args.path, args.show_taint)
 
         if args.output_format == "sarif":
             output_content = convert_to_sarif(findings)

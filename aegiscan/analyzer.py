@@ -10,7 +10,7 @@ from aegiscan.symbols import SymbolResolver, SymbolType # Import SymbolResolver
 
 class Finding:
     def __init__(self, file: str, start_line: int, end_line: int, rule_id: str, severity: RuleSeverity,
-                 message: str, code_snippet: str, confidence: str, fingerprint: str, cwe: str, fix: Optional[str] = None):
+                 message: str, code_snippet: str, confidence: str, fingerprint: str, cwe: str, fix: Optional[str] = None, taint_trace: Optional[List[str]] = None):
         self.file = file
         self.start_line = start_line
         self.end_line = end_line
@@ -22,6 +22,7 @@ class Finding:
         self.fingerprint = fingerprint
         self.cwe = cwe
         self.fix = fix
+        self.taint_trace = taint_trace
 
     def to_dict(self):
         return {
@@ -35,11 +36,12 @@ class Finding:
             "confidence": self.confidence,
             "fingerprint": self.fingerprint,
             "cwe": self.cwe,
-            "fix": self.fix
+            "fix": self.fix,
+            "taintTrace": self.taint_trace
         }
 
 class Analyzer:
-    def __init__(self, rules: List[Rule], project_root: str):
+    def __init__(self, rules: List[Rule], project_root: str, show_taint: bool = False):
         self.rules = rules
         self.findings: List[Finding] = []
         self.project_root = project_root
@@ -47,7 +49,7 @@ class Analyzer:
         self.symbol_resolver.collect_symbols(project_root) # Collect all symbols at initialization
         
         # Initialize TaintTracker once, globally for the analyzer instance
-        self.taint_tracker = TaintTracker(aliases={}) # Aliases will be updated per file
+        self.taint_tracker = TaintTracker(aliases={}, show_taint=show_taint) # Aliases will be updated per file
 
     def _get_name_from_node(self, node: ast.AST) -> Optional[str]:
         if isinstance(node, ast.Name):
@@ -219,6 +221,11 @@ class Analyzer:
                             if rule.id in ignored_lines.get(node.lineno, []):
                                 continue
 
+                            taint_trace = []
+                            if self.taint_tracker.show_taint:
+                                # Retrieve taint trace for the finding
+                                taint_trace = self.taint_tracker.get_taint_trace() # Removed rule.id argument
+
                             self.findings.append(Finding(
                                 file=filepath,
                                 start_line=node.lineno,
@@ -230,7 +237,8 @@ class Analyzer:
                                 confidence="HIGH", # Placeholder
                                 fingerprint=f"{filepath}:{node.lineno}:{rule.id}", # Simple fingerprint
                                 cwe=rule.cwe,
-                                fix=rule.fix
+                                fix=rule.fix,
+                                taint_trace=taint_trace
                             ))
 
         # Include findings from visitor (like the eval example)
@@ -255,7 +263,8 @@ class Analyzer:
                 confidence=visitor_finding["confidence"],
                 fingerprint=f"{filepath}:{visitor_finding["startLine"]}:{visitor_finding["ruleId"]}",
                 cwe=visitor_finding["cwe"],
-                fix=visitor_finding["fix"]
+                fix=visitor_finding["fix"],
+                taint_trace=[] # Visitor findings don't have taint trace for now
             ))
 
         return self.findings

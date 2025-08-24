@@ -1,6 +1,6 @@
 import json
 import os
-from typing import List
+from typing import List, Optional
 import sys
 
 # External library for SARIF, assumed to be installed via setup.py
@@ -51,7 +51,8 @@ def convert_to_sarif(findings: List[Finding], tool_name: str = "Aegiscan") -> st
             properties={
                 "cwe": finding.cwe,
                 "confidence": finding.confidence,
-                "fix": finding.fix
+                "fix": finding.fix,
+                "taintTrace": finding.taint_trace # Add taint trace to SARIF properties
             }
         ))
 
@@ -64,7 +65,7 @@ def convert_to_sarif(findings: List[Finding], tool_name: str = "Aegiscan") -> st
 def convert_to_jsonl(findings: List[Finding]) -> str:
     jsonl_output = []
     for finding in findings:
-        jsonl_output.append(json.dumps(finding.to_dict()))
+        jsonl_output.append(json.dumps(finding.to_dict())) # to_dict already includes taint_trace
     return "\n".join(jsonl_output)
 
 def pretty_print_findings(findings: List[Finding]):
@@ -88,6 +89,10 @@ def pretty_print_findings(findings: List[Finding]):
         print(f"Line: {Fore.CYAN}{finding.start_line}-{finding.end_line}{Style.RESET_ALL}")
         print(f"Message: {Fore.WHITE}{finding.message}{Style.RESET_ALL}")
         print(f"Code Snippet:\n{Fore.LIGHTBLACK_EX}{finding.code_snippet}{Style.RESET_ALL}")
+        if finding.taint_trace:
+            print(f"\n{Fore.MAGENTA}Taint Trace:{Style.RESET_ALL}")
+            for step in finding.taint_trace:
+                print(f"{Fore.MAGENTA}- {step}{Style.RESET_ALL}")
         if finding.fix:
             print(f"Suggested Fix: {Fore.GREEN}{finding.fix}{Style.RESET_ALL}")
         print(f"{Fore.LIGHTBLACK_EX}--------------------------------------------------\n{Style.RESET_ALL}")
