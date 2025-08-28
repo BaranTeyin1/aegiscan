@@ -8,24 +8,34 @@ class TaintTracker:
         self.tainted_call_returns: Set[str] = set() # To track tainted return values of function calls
         self.tainted_function_returns: Set[str] = set() # To track functions whose returns are tainted
         self.tainted_function_parameters: Dict[str, Set[str]] = {} # To track tainted parameters of functions
+        self.tainted_attributes: Set[str] = set() # New: To track fully qualified tainted attributes (e.g., "module.Class.attribute")
         self.show_taint = show_taint
         self.taint_log: List[str] = []
         self.logged_taint_events: Set[str] = set() # To store unique log messages for the current trace
 
-    def is_tainted(self, name: str) -> bool:
-        # Resolve alias if exists
-        resolved_name = self.aliases.get(name, name)
-        return resolved_name in self.tainted_vars
+    def is_tainted(self, name: str, is_attribute: bool = False) -> bool:
+        # Resolve alias if exists for variables
+        if not is_attribute:
+            resolved_name = self.aliases.get(name, name)
+            return resolved_name in self.tainted_vars
+        else:
+            # For attributes, name is expected to be a FQN already
+            return name in self.tainted_attributes
 
     def _log_taint_event(self, message: str):
         if self.show_taint and message not in self.logged_taint_events:
             self.taint_log.append(message)
             self.logged_taint_events.add(message)
 
-    def add_source(self, name: str):
-        resolved_name = self.aliases.get(name, name)
-        self.tainted_vars.add(resolved_name)
-        self._log_taint_event(f"Source detected: '{resolved_name}'")
+    def add_source(self, name: str, is_attribute: bool = False):
+        if not is_attribute:
+            resolved_name = self.aliases.get(name, name)
+            self.tainted_vars.add(resolved_name)
+            self._log_taint_event(f"Source detected: '{resolved_name}'")
+        else:
+            # For attributes, name is expected to be a FQN already
+            self.tainted_attributes.add(name)
+            self._log_taint_event(f"Tainted attribute detected: '{name}'")
 
     def mark_function_return_tainted(self, fully_qualified_function_name: str):
         self.tainted_function_returns.add(fully_qualified_function_name)
@@ -55,35 +65,44 @@ class TaintTracker:
 
     def propagate_taint(self, node: ast.AST):
         if isinstance(node, ast.Assign):
-            # Propagate taint through assignment
+            # Propagate taint through assignment to variables and attributes
+            is_value_tainted = False
             if isinstance(node.value, ast.Name) and self.is_tainted(node.value.id):
-                for target in node.targets:
-                    if isinstance(target, ast.Name):
-                        self.add_source(target.id)
-                        self._log_taint_event(f"Taint propagates by assignment: '{node.value.id}' -> '{target.id}'")
+                is_value_tainted = True
             elif isinstance(node.value, ast.Call):
-                # Check if the function call itself is tainted (e.g., from a source function)
                 func_name = None
                 if isinstance(node.value.func, ast.Name):
                     func_name = node.value.func.id
                 elif isinstance(node.value.func, ast.Attribute):
-                    if isinstance(node.value.func.value, ast.Name):
-                        func_name = f"{node.value.func.value.id}.{node.value.func.attr}"
-                
-                # If the function call return is tainted, mark the assigned variable as tainted
+                    # This case is handled by _get_name_from_node in Analyzer.py, but here we need its FQN.
+                    # For now, we'll assume func_name is the FQN from analyzer.
+                    func_name = self._get_name_from_node_for_taint_propagation(node.value.func) # New helper for FQN
+
                 if func_name and (func_name in self.tainted_call_returns or func_name in self.tainted_function_returns):
-                    for target in node.targets:
-                        if isinstance(target, ast.Name):
-                            self.add_source(target.id)
-                            self._log_taint_event(f"Taint propagates from call return: '{func_name}' -> '{target.id}'")
-                else: # Check if any argument to a call is tainted and propagate if needed
+                    is_value_tainted = True
+                else:
                     for arg in node.value.args:
                         if isinstance(arg, ast.Name) and self.is_tainted(arg.id):
-                            for target in node.targets:
-                                if isinstance(target, ast.Name):
-                                    self.add_source(target.id)
-                                    self._log_taint_event(f"Taint propagates from call argument: '{arg.id}' -> '{target.id}'")
-                                break # Taint propagates if any arg is tainted
+                            is_value_tainted = True
+                            break
+                        elif isinstance(arg, ast.Attribute):
+                            attribute_fqn = self._get_name_from_node_for_taint_propagation(arg)
+                            if attribute_fqn and self.is_tainted(attribute_fqn, is_attribute=True):
+                                is_value_tainted = True
+                                break
+
+            if is_value_tainted:
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        self.add_source(target.id) # Mark variable as tainted
+                        self._log_taint_event(f"Taint propagates by assignment: Value -> '{target.id}'")
+                    elif isinstance(target, ast.Attribute):
+                        # This requires FQN for the attribute
+                        attribute_fqn = self._get_name_from_node_for_taint_propagation(target)
+                        if attribute_fqn:
+                            self.add_source(attribute_fqn, is_attribute=True)
+                            self._log_taint_event(f"Taint propagates by assignment: Value -> '{attribute_fqn}'")
+
         elif isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
             # This handles cases where a function call is not assigned to a variable, but its arguments might be tainted
             func_name = None
@@ -109,6 +128,35 @@ class TaintTracker:
             # For function definitions, mark arguments as tainted if they are sources.
             # This requires knowing which arguments are considered sources by rules.
             pass # This will be handled by the Analyzer when applying rules
+
+    def _get_name_from_node_for_taint_propagation(self, node: ast.AST) -> Optional[str]:
+        """
+        Helper to get the name (or FQN for attributes/calls) of a node during taint propagation.
+        This is a simplified version for use *within* TaintTracker, as it doesn't have access
+        to Analyzer's symbol resolver or current_module_name/visitor.
+        It relies on FQNs being already established for attributes/function returns.
+        """
+        if isinstance(node, ast.Name):
+            return self.aliases.get(node.id, node.id)
+        elif isinstance(node, ast.Attribute):
+            # For attributes, we need a way to reconstruct the FQN
+            # This is a limitation without full context from Analyzer.
+            # For a basic approach, we can stringify if possible.
+            # A more robust solution would involve passing FQNs from Analyzer.
+            if isinstance(node.value, ast.Name):
+                if node.value.id == "self": # Special handling for self.attribute
+                    # This FQN will be built by Analyzer and passed to tainted_attributes
+                    # For now, we rely on it being already present in tainted_attributes
+                    return f"self.{node.attr}" # Placeholder, actual FQN will be more complete
+                return f"{node.value.id}.{node.attr}"
+            elif isinstance(node.value, ast.Attribute):
+                base_name = self._get_name_from_node_for_taint_propagation(node.value)
+                if base_name:
+                    return f"{base_name}.{node.attr}"
+            return None
+        elif isinstance(node, ast.Call):
+            return self._get_name_from_node_for_taint_propagation(node.func)
+        return None
 
     def get_taint_trace(self) -> List[str]:
         """Returns the collected taint log and clears it."""
