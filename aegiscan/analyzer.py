@@ -80,10 +80,55 @@ class Analyzer:
         # Add other AST node types as needed for more comprehensive taint checking
         return False
 
+    def _analyze_function_body_for_taint(self, func_node: ast.AST, func_fqn: str, file_content: str, aliases: Dict[str, str]):
+        """
+        Analyzes the body of a function for taint propagation and marks the function's
+        return as tainted if a tainted value is returned.
+        """
+        # Create a temporary TaintTracker for the function's local scope
+        # Seed it with parameters that were marked as tainted during inter-procedural analysis
+        local_taint_tracker = TaintTracker(aliases=aliases, show_taint=self.taint_tracker.show_taint)
+
+        # Mark function parameters as tainted if they were tainted by callers
+        if isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for arg_node in func_node.args.args:
+                if self.taint_tracker.is_function_parameter_tainted(func_fqn, arg_node.arg):
+                    local_taint_tracker.add_source(arg_node.arg)
+
+        for node in ast.walk(func_node):
+            local_taint_tracker.propagate_taint(node)
+
+            if isinstance(node, ast.Return) and node.value:
+                # Check if the returned value is tainted in the local scope
+                if self._is_node_tainted_locally(node.value, local_taint_tracker):
+                    self.taint_tracker.mark_function_return_tainted(func_fqn)
+                    # No need to break, function might have multiple return paths
+
+    def _is_node_tainted_locally(self, node: ast.AST, local_taint_tracker: TaintTracker) -> bool:
+        """Helper to check if a node is tainted using a local taint tracker."""
+        if isinstance(node, ast.Name):
+            return local_taint_tracker.is_tainted(node.id)
+        elif isinstance(node, (ast.JoinedStr, ast.BinOp)):
+            for sub_node in ast.walk(node):
+                if isinstance(sub_node, ast.Name) and local_taint_tracker.is_tainted(sub_node.id):
+                    return True
+        elif isinstance(node, ast.Call):
+            called_func_name = self._get_name_from_node(node.func)
+            if called_func_name and local_taint_tracker.is_function_return_tainted(called_func_name):
+                return True
+            for arg in node.args: # Check if arguments passed to a call within the function are tainted
+                if self._is_node_tainted_locally(arg, local_taint_tracker):
+                    return True
+        return False
+
     def analyze_file(self, filepath: str, file_content: str) -> List[Finding]:
         self.findings = [] # Reset findings for each file
-        self.taint_tracker.tainted_vars.clear() # Clear local tainted variables for this file analysis
-        
+        # Clear local tainted variables for this file analysis.
+        # We don't clear tainted_function_returns or tainted_function_parameters here
+        # because they are part of the global inter-procedural state across files.
+        self.taint_tracker.tainted_vars.clear() 
+        self.taint_tracker.logged_taint_events.clear() # Clear log for new file
+
         # Parse ignore annotations
         ignored_lines: Dict[int, List[str]] = self._parse_ignore_annotations(file_content)
 
@@ -107,7 +152,7 @@ class Analyzer:
         # Update the taint_tracker's aliases for the current file's context
         self.taint_tracker.aliases = visitor.aliases
 
-        # --- First Pass: Collect initial sources and mark inter-procedural call parameters/returns ---
+        # --- Pass 1: Collect initial sources and mark inter-procedural call parameters/returns ---
         for node in ast.walk(tree):
             # Collect initial sources from function calls (e.g., input(), request.args.get())
             if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
@@ -117,19 +162,31 @@ class Analyzer:
                 
                 func_full_name = resolved_symbol.fully_qualified_name if resolved_symbol else called_func_name
                 
+                is_call_return_tainted = False
                 for rule in self.rules:
                     for source_pattern in rule.sources:
                         # Check if the called function's full name starts with a source pattern
                         if func_full_name and func_full_name.startswith(source_pattern):
-                            for target in node.targets:
-                                if isinstance(target, ast.Name):
-                                    self.taint_tracker.add_source(target.id)
-                                    # Mark the return of the call as tainted
-                                    self.taint_tracker.handle_call_return(func_full_name, target.id)
-                                    # If the resolved symbol is a function, consider its return tainted
-                                    if resolved_symbol and resolved_symbol.symbol_type == SymbolType.FUNCTION:
-                                        self.taint_tracker.mark_function_return_tainted(resolved_symbol.fully_qualified_name)
+                            is_call_return_tainted = True
+                            break
+                    if is_call_return_tainted: break
 
+                # Also check if any argument to the call is tainted
+                for arg in node.value.args:
+                    if self._is_node_tainted(arg):
+                        is_call_return_tainted = True
+                        break
+                
+                if is_call_return_tainted:
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            self.taint_tracker.add_source(target.id)
+                            # Mark the return of the call as tainted
+                            self.taint_tracker.handle_call_return(func_full_name, target.id) # This adds to tainted_call_returns
+                            # If the resolved symbol is a function, consider its return tainted globally
+                            if resolved_symbol and resolved_symbol.symbol_type == SymbolType.FUNCTION:
+                                self.taint_tracker.mark_function_return_tainted(resolved_symbol.fully_qualified_name)
+                                
             # Inter-procedural taint propagation at call sites (caller to callee)
             # Propagate taint from tainted arguments to the callee's parameters
             if isinstance(node, ast.Call):
@@ -137,7 +194,6 @@ class Analyzer:
                 resolved_symbol = self.symbol_resolver.resolve_call(module_name, called_func_name, visitor.imports)
                 
                 if resolved_symbol and resolved_symbol.symbol_type == SymbolType.FUNCTION:
-                    # Map call arguments to function parameters
                     func_params_info = self.symbol_resolver.global_symbol_table.get(resolved_symbol.fully_qualified_name)
                     if func_params_info and func_params_info.parameters:
                         for i, arg_node in enumerate(node.args):
@@ -150,19 +206,14 @@ class Analyzer:
                                     )
                             # TODO: Handle keyword arguments for more robust propagation
 
-        # --- Second Pass: Propagate taint from function parameters to local variables within their definitions ---
+        # --- Pass 2: Intra-procedural taint propagation within functions and return value analysis ---
+        # This pass will analyze each function's body to determine if its return value is tainted
+        # based on tainted parameters or local sources within the function.
         for node in ast.walk(tree):
-            # If this node is a function definition, check its parameters for taint
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                func_fqn = f"{module_name}.{node.name}" # Construct FQN for function defined in current file
-                func_symbol_info = self.symbol_resolver.global_symbol_table.get(func_fqn)
-                if func_symbol_info and func_symbol_info.parameters:
-                    for param_info in func_symbol_info.parameters:
-                        param_name = param_info['name']
-                        # Check if this parameter was marked as tainted by a call in another file (or earlier in this file)
-                        if self.taint_tracker.is_function_parameter_tainted(func_fqn, param_name):
-                            # Mark the local variable corresponding to this parameter as tainted
-                            self.taint_tracker.add_source(param_name)
+                func_fqn = f"{module_name}.{node.name}" # FQN for function defined in current file
+                # Use the new helper method to analyze the function's body
+                self._analyze_function_body_for_taint(node, func_fqn, file_content, visitor.aliases)
 
         # --- Third Pass: Full intra-procedural taint propagation and sink detection ---
         for node in ast.walk(tree):
@@ -261,7 +312,7 @@ class Analyzer:
                 message=visitor_finding["message"],
                 code_snippet=code_snippet,
                 confidence=visitor_finding["confidence"],
-                fingerprint=f"{filepath}:{visitor_finding["startLine"]}:{visitor_finding["ruleId"]}",
+                fingerprint=f"{filepath}:{visitor_finding['startLine']}:{visitor_finding['ruleId']}",
                 cwe=visitor_finding["cwe"],
                 fix=visitor_finding["fix"],
                 taint_trace=[] # Visitor findings don't have taint trace for now
